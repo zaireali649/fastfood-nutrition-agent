@@ -15,11 +15,11 @@ from agents import Agent, Runner, set_default_openai_key
 async def generate_tasks(task_generator: Agent, goal: str) -> str:
     """
     Generate meal recommendations using the nutrition agent.
-    
+
     Args:
         task_generator: The configured nutrition agent
         goal: User's meal request with restaurant, calories, and dietary restrictions
-        
+
     Returns:
         The agent's meal recommendation response
     """
@@ -30,7 +30,7 @@ async def generate_tasks(task_generator: Agent, goal: str) -> str:
 async def run_nutrition_agent(task_generator: Agent, user_goal: str) -> None:
     """
     Process a single nutrition request and display the results.
-    
+
     Args:
         task_generator: The configured nutrition agent
         user_goal: User's specific meal request
@@ -43,10 +43,10 @@ async def run_nutrition_agent(task_generator: Agent, user_goal: str) -> None:
 def get_task_generator(prompt: str) -> Agent:
     """
     Create and configure the nutrition agent with the given prompt.
-    
+
     Args:
         prompt: The system prompt containing nutritionist instructions
-        
+
     Returns:
         Configured Agent instance for nutrition recommendations
     """
@@ -55,10 +55,11 @@ def get_task_generator(prompt: str) -> Agent:
         instructions=f'"""{prompt}"""',
     )
 
+
 async def run_nutrition_workflow() -> None:
     """
     Main workflow function that processes multiple nutrition requests.
-    
+
     Sets up the environment, creates the agent, and processes a list of meal requests
     from different fast food restaurants with various dietary restrictions.
     """
@@ -85,6 +86,7 @@ async def run_nutrition_workflow() -> None:
     # Process each meal request sequentially
     for user_goal in user_goals:
         await run_nutrition_agent(task_generator, user_goal)
+
 
 if __name__ == "__main__":
     # Run the nutrition workflow
