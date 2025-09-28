@@ -1,5 +1,4 @@
 import os
-import openai
 from agents import Agent, Runner
 import asyncio
 from dotenv import load_dotenv
