@@ -27,17 +27,20 @@ async def generate_tasks(task_generator: Agent, goal: str) -> str:
     return result.final_output
 
 
-async def run_nutrition_agent(task_generator: Agent, user_goal: str) -> None:
+async def run_nutrition_agent(task_generator: Agent, user_goal: str) -> str:
     """
-    Process a single nutrition request and display the results.
+    Process a single nutrition request and return the results.
 
     Args:
         task_generator: The configured nutrition agent
         user_goal: User's specific meal request
+
+    Returns:
+        The agent's meal recommendation response
     """
     # Get meal recommendations from the agent
     tasks = await generate_tasks(task_generator, user_goal)
-    print(tasks)
+    return tasks
 
 
 def get_task_generator(prompt: str) -> Agent:
