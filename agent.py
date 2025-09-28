@@ -20,8 +20,7 @@ def get_task_generator(prompt):
         instructions=f'"""{prompt}"""',
     )
 
-
-async def main():
+async def run_nutrition_workflow():
     load_dotenv()  # Load variables from .env into the environment
 
     set_default_openai_key(os.environ["OPENAI_API_KEY"])
@@ -36,9 +35,9 @@ async def main():
         "I want a 1200 calorie meal from chick-fil-a. I cannot have gluten.",
         "I want a 1200 calorie meal from Mcdonald's. I cannot have pork.",
     ]
+
     for user_goal in user_goals:
         await run_nutrition_agent(task_generator, user_goal)
 
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(run_nutrition_workflow())
