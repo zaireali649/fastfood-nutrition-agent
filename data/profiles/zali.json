@@ -1,0 +1,56 @@
+{
+  "user_preferences": {
+    "default_calorie_target": 1500,
+    "dietary_restrictions": [
+      "Gluten-free",
+      "Vegetarian"
+    ],
+    "favorite_restaurants": [
+      "Chick-fil-A",
+      "Subway",
+      "Chipotle",
+      "Panera Bread"
+    ],
+    "disliked_items": [],
+    "preferred_cooking_methods": []
+  },
+  "meal_history": [
+    {
+      "restaurant": "Chick-fil-A",
+      "calories": 1500,
+      "rating": 5,
+      "timestamp": "2025-10-05T17:59:11.549281"
+    },
+    {
+      "restaurant": "Subway",
+      "calories": 1200,
+      "rating": 3,
+      "timestamp": "2025-10-05T18:00:33.038684"
+    },
+    {
+      "restaurant": "Taco Bell",
+      "calories": 1300,
+      "rating": 4,
+      "timestamp": "2025-10-05T18:01:48.288904"
+    },
+    {
+      "restaurant": "Pizza Hut",
+      "calories": 1800,
+      "rating": 3,
+      "timestamp": "2025-10-05T18:03:35.308872"
+    },
+    {
+      "restaurant": "Burger King",
+      "calories": 1700,
+      "rating": 4,
+      "timestamp": "2025-10-05T18:05:48.858910"
+    }
+  ],
+  "stats": {
+    "total_meals_tracked": 5,
+    "avg_daily_calories": 1500.0,
+    "most_visited_restaurant": "Subway",
+    "profile_created": "2025-10-05T13:24:23.746064",
+    "avg_meal_rating": 3.8
+  }
+}
