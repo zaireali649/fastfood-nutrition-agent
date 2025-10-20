@@ -1,0 +1,41 @@
+# Streamlit Share Production Configuration
+
+[theme]
+primaryColor = "#FF6B35"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[server]
+# Production server settings
+headless = true
+enableCORS = true
+enableXsrfProtection = true
+maxUploadSize = 5
+port = 8501
+
+# Session configuration
+maxMessageSize = 200
+
+[browser]
+# Browser settings
+gatherUsageStats = false
+serverAddress = "0.0.0.0"
+serverPort = 8501
+
+[client]
+# Client-side caching
+showErrorDetails = false
+toolbarMode = "minimal"
+
+[runner]
+# Performance settings
+magicEnabled = true
+fastReruns = true
+
+[logger]
+# Logging level for production
+level = "warning"
+messageFormat = "%(asctime)s %(levelname)s: %(message)s"
+

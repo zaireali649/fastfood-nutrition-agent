@@ -3,6 +3,8 @@ User Profile Management System.
 
 This module handles loading, saving, and managing user profiles including
 preferences, meal history, and statistics.
+
+Now with Supabase integration for production with automatic JSON fallback.
 """
 
 import json
@@ -10,9 +12,12 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+import logging
+from config.database import get_supabase_client, is_database_available
 
+logger = logging.getLogger(__name__)
 
-# Directory to store user profiles
+# Directory to store user profiles (fallback storage)
 PROFILES_DIR = Path("data/profiles")
 
 
@@ -46,17 +51,8 @@ def create_default_profile() -> Dict:
     }
 
 
-def save_profile(profile_name: str, profile_data: Dict) -> bool:
-    """
-    Save a user profile to disk.
-
-    Args:
-        profile_name: Name of the profile to save
-        profile_data: Profile data dictionary
-
-    Returns:
-        True if successful, False otherwise
-    """
+def _save_profile_to_json(profile_name: str, profile_data: Dict) -> bool:
+    """Save profile to JSON file (fallback storage)."""
     try:
         ensure_profiles_directory()
         file_path = PROFILES_DIR / f"{profile_name}.json"
@@ -66,20 +62,103 @@ def save_profile(profile_name: str, profile_data: Dict) -> bool:
 
         return True
     except Exception as e:
-        print(f"Error saving profile: {e}")
+        logger.error(f"Error saving profile to JSON: {e}")
         return False
 
 
-def load_profile(profile_name: str) -> Optional[Dict]:
+def _save_profile_to_database(profile_name: str, profile_data: Dict) -> bool:
+    """Save profile to Supabase database."""
+    try:
+        client = get_supabase_client()
+        prefs = profile_data.get("user_preferences", {})
+        stats = profile_data.get("stats", {})
+        
+        # Check if profile exists
+        result = client.table("user_profiles") \
+            .select("id") \
+            .eq("profile_name", profile_name) \
+            .execute()
+        
+        profile_record = {
+            "profile_name": profile_name,
+            "dietary_restrictions": prefs.get("dietary_restrictions", []),
+            "favorite_restaurants": prefs.get("favorite_restaurants", []),
+            "default_calorie_target": prefs.get("default_calorie_target", 1200),
+            "preferred_cooking_methods": prefs.get("preferred_cooking_methods", []),
+            "disliked_items": prefs.get("disliked_items", []),
+            "total_meals_tracked": stats.get("total_meals_tracked", 0),
+            "avg_daily_calories": stats.get("avg_daily_calories", 0),
+            "avg_meal_rating": stats.get("avg_meal_rating", 0),
+        }
+        
+        if result.data:
+            # Update existing profile
+            profile_id = result.data[0]["id"]
+            client.table("user_profiles") \
+                .update(profile_record) \
+                .eq("id", profile_id) \
+                .execute()
+        else:
+            # Insert new profile
+            result = client.table("user_profiles") \
+                .insert(profile_record) \
+                .execute()
+            profile_id = result.data[0]["id"]
+        
+        # Save meal history
+        meal_history = profile_data.get("meal_history", [])
+        if meal_history:
+            # Delete old meal history for this profile
+            client.table("meal_history") \
+                .delete() \
+                .eq("profile_id", profile_id) \
+                .execute()
+            
+            # Insert new meal history
+            meal_records = []
+            for meal in meal_history:
+                meal_records.append({
+                    "profile_id": profile_id,
+                    "restaurant": meal.get("restaurant", "Unknown"),
+                    "calories": meal.get("calories", 0),
+                    "rating": meal.get("rating"),
+                    "timestamp": meal.get("timestamp", datetime.now().isoformat()),
+                })
+            
+            if meal_records:
+                client.table("meal_history").insert(meal_records).execute()
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error saving profile to database: {e}")
+        return False
+
+
+def save_profile(profile_name: str, profile_data: Dict) -> bool:
     """
-    Load a user profile from disk.
+    Save a user profile to database (with JSON fallback).
 
     Args:
-        profile_name: Name of the profile to load
+        profile_name: Name of the profile to save
+        profile_data: Profile data dictionary
 
     Returns:
-        Profile data dictionary or None if not found
+        True if successful, False otherwise
     """
+    # Try database first
+    if is_database_available():
+        db_success = _save_profile_to_database(profile_name, profile_data)
+        if db_success:
+            # Also save to JSON as backup
+            _save_profile_to_json(profile_name, profile_data)
+            return True
+    
+    # Fallback to JSON only
+    return _save_profile_to_json(profile_name, profile_data)
+
+
+def _load_profile_from_json(profile_name: str) -> Optional[Dict]:
+    """Load profile from JSON file (fallback storage)."""
     try:
         file_path = PROFILES_DIR / f"{profile_name}.json"
 
@@ -89,24 +168,119 @@ def load_profile(profile_name: str) -> Optional[Dict]:
         with open(file_path, "r") as f:
             return json.load(f)
     except Exception as e:
-        print(f"Error loading profile: {e}")
+        logger.error(f"Error loading profile from JSON: {e}")
         return None
+
+
+def _load_profile_from_database(profile_name: str) -> Optional[Dict]:
+    """Load profile from Supabase database."""
+    try:
+        client = get_supabase_client()
+        
+        # Get profile
+        result = client.table("user_profiles") \
+            .select("*") \
+            .eq("profile_name", profile_name) \
+            .execute()
+        
+        if not result.data:
+            return None
+        
+        profile_db = result.data[0]
+        profile_id = profile_db["id"]
+        
+        # Get meal history
+        meals_result = client.table("meal_history") \
+            .select("*") \
+            .eq("profile_id", profile_id) \
+            .order("timestamp", desc=True) \
+            .limit(30) \
+            .execute()
+        
+        # Convert to old format
+        meal_history = []
+        for meal in meals_result.data:
+            meal_history.append({
+                "restaurant": meal["restaurant"],
+                "calories": meal["calories"],
+                "rating": meal.get("rating"),
+                "timestamp": meal["timestamp"],
+            })
+        
+        # Reconstruct profile dictionary
+        profile_data = {
+            "user_preferences": {
+                "default_calorie_target": profile_db.get("default_calorie_target", 1200),
+                "dietary_restrictions": profile_db.get("dietary_restrictions", []),
+                "favorite_restaurants": profile_db.get("favorite_restaurants", []),
+                "disliked_items": profile_db.get("disliked_items", []),
+                "preferred_cooking_methods": profile_db.get("preferred_cooking_methods", []),
+            },
+            "meal_history": list(reversed(meal_history)),  # Reverse to chronological order
+            "stats": {
+                "total_meals_tracked": profile_db.get("total_meals_tracked", 0),
+                "avg_daily_calories": float(profile_db.get("avg_daily_calories", 0)),
+                "avg_meal_rating": float(profile_db.get("avg_meal_rating", 0)) if profile_db.get("avg_meal_rating") else None,
+                "profile_created": profile_db.get("created_at", datetime.now().isoformat()),
+            },
+        }
+        
+        return profile_data
+    except Exception as e:
+        logger.error(f"Error loading profile from database: {e}")
+        return None
+
+
+def load_profile(profile_name: str) -> Optional[Dict]:
+    """
+    Load a user profile from database (with JSON fallback).
+
+    Args:
+        profile_name: Name of the profile to load
+
+    Returns:
+        Profile data dictionary or None if not found
+    """
+    # Try database first
+    if is_database_available():
+        profile = _load_profile_from_database(profile_name)
+        if profile:
+            return profile
+    
+    # Fallback to JSON
+    return _load_profile_from_json(profile_name)
 
 
 def list_profiles() -> List[str]:
     """
-    List all available user profiles.
+    List all available user profiles from database and JSON.
 
     Returns:
         List of profile names
     """
+    profiles = set()
+    
+    # Get from database
+    if is_database_available():
+        try:
+            client = get_supabase_client()
+            result = client.table("user_profiles") \
+                .select("profile_name") \
+                .execute()
+            
+            profiles.update(row["profile_name"] for row in result.data)
+        except Exception as e:
+            logger.error(f"Error listing profiles from database: {e}")
+    
+    # Get from JSON files
     try:
         ensure_profiles_directory()
         profile_files = PROFILES_DIR.glob("*.json")
-        return [f.stem for f in profile_files]
+        profiles.update(f.stem for f in profile_files)
     except Exception as e:
-        print(f"Error listing profiles: {e}")
-        return []
+        logger.error(f"Error listing profiles from JSON: {e}")
+    
+    return sorted(list(profiles))
 
 
 def add_meal_to_history(profile_data: Dict, meal_data: Dict) -> Dict:
