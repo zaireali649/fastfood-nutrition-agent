@@ -1,10 +1,14 @@
 """
-Multi-Agent Fast Food Nutrition Application.
+Fast Food Nutrition Agent Streamlit Application.
 
-This Streamlit application uses a multi-agent system with specialized agents:
-- Coordinator: Orchestrates the workflow
-- Nutritionist: Analyzes dietary requirements
-- Restaurant Expert: Provides menu recommendations
+This module provides a web interface for the Fast Food Nutrition Agent,
+allowing users to input their dietary preferences and receive personalized
+meal recommendations from fast food restaurants.
+
+The application uses Streamlit for the user interface and integrates with
+the OpenAI agents library to generate nutrition-focused meal suggestions
+based on user requirements including calorie limits, dietary restrictions,
+and restaurant preferences.
 """
 
 import asyncio
@@ -15,7 +19,7 @@ import streamlit as st
 from agents import set_default_openai_key
 from dotenv import load_dotenv
 
-from multi_agents.coordinator import run_multi_agent_workflow
+from agent import get_task_generator, run_nutrition_agent
 from memory.user_profile import (
     add_meal_to_history,
     create_default_profile,
@@ -26,12 +30,6 @@ from memory.user_profile import (
     save_profile,
 )
 
-# Import production features
-from core.health_endpoint import render_health_dashboard, render_cost_dashboard
-from middleware.security import sanitize_user_inputs
-from middleware.error_handler import SafetyWrapper
-from config.cost_control import can_make_api_request
-
 
 def format_user_goal(
     restaurant: str,
@@ -39,10 +37,26 @@ def format_user_goal(
     dietary_restrictions: List[str],
     additional_notes: str,
 ) -> str:
-    """Format user inputs into a natural language goal."""
+    """
+    Format user inputs into a natural language goal for the nutrition agent.
+
+    Args:
+        restaurant: The name of the restaurant where the user wants to eat.
+        calories: The target calorie count for the meal.
+        dietary_restrictions: List of dietary restrictions or preferences.
+        additional_notes: Any additional preferences or notes from the user.
+
+    Returns:
+        A formatted string representing the user's meal request.
+
+    Raises:
+        ValueError: If restaurant name is empty or invalid.
+    """
+    # Validate restaurant input
     if not restaurant.strip():
         raise ValueError("Restaurant name cannot be empty")
 
+    # Format dietary restrictions into natural language
     if dietary_restrictions:
         if len(dietary_restrictions) == 1:
             restrictions_text = (
@@ -55,117 +69,143 @@ def format_user_goal(
     else:
         restrictions_text = "I have no dietary restrictions"
 
+    # Build the main user goal
     user_goal = f"I want a {calories} calorie meal from {restaurant.lower()}. {restrictions_text}."
 
+    # Add additional notes if provided
     if additional_notes.strip():
         user_goal += f" Additional preferences: {additional_notes.strip()}."
 
     return user_goal
 
 
-def generate_multi_agent_recommendations(
+def display_previous_recommendations() -> None:
+    """
+    Display previously generated recommendations from session state.
+
+    Shows recommendations that were generated in previous interactions
+    and provides an option to clear them.
+    """
+    if (
+        hasattr(st.session_state, "show_recommendations")
+        and st.session_state.show_recommendations
+    ):
+        st.markdown("---")
+        st.header("🍽️ Your Previous Meal Recommendations")
+        st.markdown(st.session_state.recommendations)
+        st.code(st.session_state.recommendations, language="text")
+        st.caption("💡 You can select and copy the text above")
+
+        if st.button("🗑️ Clear Previous Recommendations"):
+            st.session_state.show_recommendations = False
+            st.session_state.recommendations = ""
+            st.rerun()
+
+
+def generate_meal_recommendations(
     user_goal: str, restaurant: str, calories: int, user_profile: Optional[Dict] = None
 ) -> None:
-    """Generate meal recommendations using the multi-agent system."""
+    """
+    Generate meal recommendations using the nutrition agent.
+
+    Args:
+        user_goal: The formatted user request for meal recommendations.
+        restaurant: Restaurant name for logging
+        calories: Calorie count for logging
+        user_profile: Optional user profile for context
+
+    Raises:
+        FileNotFoundError: If the agent prompt file is not found.
+        Exception: For any other errors during recommendation generation.
+    """
+    # Check if OpenAI API key is available
     if not os.getenv("OPENAI_API_KEY"):
         st.error(
             "❌ OpenAI API key not found. Please set your OPENAI_API_KEY environment variable."
         )
         st.stop()
 
-    # Check budget before making request
-    can_request, reason = can_make_api_request(estimated_cost=0.01)
-    if not can_request:
-        st.error(f"❌ {reason}")
-        st.info("💡 Your budget limit has been reached. Please try again later.")
-        st.stop()
+    # Show loading spinner during processing
+    with st.spinner("🤖 Analyzing your request and finding the best meal options..."):
+        try:
+            # Read the nutritionist prompt from file
+            with open("prompts/agent_prompt.txt", "r") as file:
+                prompt: str = file.read()
 
-    # Sanitize inputs for security
-    sanitized = sanitize_user_inputs(user_goal, restaurant)
-    if not sanitized["valid"]:
-        st.error("❌ Invalid input detected")
-        for error in sanitized["errors"]:
-            st.warning(f"⚠️ {error}")
-        st.stop()
+            # Create the nutrition agent
+            task_generator = get_task_generator(prompt, user_profile)
 
-    with st.spinner("🤖 Multi-agent system analyzing your request..."):
-        # Use safety wrapper for advanced error handling
-        with SafetyWrapper(error_type="api_error") as safety:
-            try:
-                # Run multi-agent workflow
-                recommendations, session_context = asyncio.run(
-                    run_multi_agent_workflow(user_goal, user_profile)
+            # Run the nutrition agent and get results (with context)
+            recommendations: str = asyncio.run(
+                run_nutrition_agent(task_generator, user_goal, user_profile)
+            )
+
+            # Store recommendations in session state for persistence
+            st.session_state.recommendations = recommendations
+            st.session_state.show_recommendations = True
+            st.session_state.last_restaurant = restaurant
+            st.session_state.last_calories = calories
+            st.session_state.meal_logged = False
+
+            # Display success message
+            st.success("✅ Meal recommendations generated!")
+
+            # Create a nice display for the recommendations
+            st.markdown("---")
+            st.header("🍽️ Your Personalized Meal Recommendations")
+
+            # Display the recommendations in formatted markdown
+            st.markdown(recommendations)
+
+            # Add copy functionality
+            st.markdown("---")
+
+            if st.button(
+                "📋 Copy to Clipboard",
+                help="Copy the recommendations to your clipboard",
+            ):
+                st.code(recommendations, language="text")
+                st.success(
+                    "📋 Recommendations displayed above - you can now select and copy the text!"
                 )
 
-                # Store in session state
-                st.session_state.recommendations = recommendations
-                st.session_state.session_context = session_context
-                st.session_state.show_recommendations = True
-                st.session_state.last_restaurant = restaurant
-                st.session_state.last_calories = calories
-                st.session_state.meal_logged = False
-
-                # Display success message
-                st.success("✅ Multi-agent analysis complete!")
-
-                # Show agent workflow info
-                agents_used = session_context.get("agents_used", [])
-                if agents_used:
-                    st.info(f"🤝 Agents collaborated: {' → '.join(agents_used)}")
-
-                # Show warnings if fallback was triggered
-                if session_context.get("fallback_triggered"):
-                    st.warning("⚠️ Fallback mode was used due to technical issues")
-
-                # Display the recommendations
-                st.markdown("---")
-                st.header("🍽️ Your Multi-Agent Meal Recommendations")
-                st.markdown(recommendations)
-
-                # Add expandable section for technical details
-                with st.expander("🔍 View Multi-Agent Workflow Details", expanded=False):
-                    st.json(session_context)
-
-            except FileNotFoundError:
-                st.error(
-                    "❌ Could not find agent prompt files. Please ensure all prompts exist in the 'prompts/' directory."
-                )
-            except Exception as e:
-                st.error(f"❌ An error occurred: {str(e)}")
-        
-        # Check if safety wrapper caught an error
-        if safety.error_occurred:
-            st.error(safety.error_message)
+        except FileNotFoundError:
+            st.error(
+                "❌ Could not find the agent prompt file. Please ensure 'prompts/agent_prompt.txt' exists."
+            )
+        except Exception as e:
+            st.error(f"❌ An error occurred: {str(e)}")
 
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
-set_default_openai_key(os.environ.get("OPENAI_API_KEY", ""))
 
-# Configure Streamlit page
+# Set OpenAI API key explicitly for the agents library
+set_default_openai_key(os.environ["OPENAI_API_KEY"])
+
+# Configure Streamlit page settings
 st.set_page_config(
-    page_title="Multi-Agent Nutrition System", page_icon="🤖", layout="wide"
+    page_title="Fast Food Nutrition Agent", page_icon="🍔", layout="wide"
 )
 
-# Initialize session state
+# Initialize session state for profile
 if "current_profile" not in st.session_state:
     st.session_state.current_profile = None
 if "profile_name" not in st.session_state:
     st.session_state.profile_name = None
 
 # Title and description
-st.title("🤖 Multi-Agent Fast Food Nutrition System")
+st.title("🍔 Fast Food Nutrition Agent")
 st.markdown("""
-**NEW:** Powered by specialized AI agents working together!
-- 🧬 **Nutritionist Agent** analyzes your dietary needs
-- 🍔 **Restaurant Expert** recommends specific menu items  
-- 🎯 **Coordinator Agent** combines insights for optimal recommendations
+Get personalized meal recommendations from fast food restaurants based on your dietary needs and calorie requirements.
 """)
 
-# Sidebar: Profile Management
+# Create sidebar for user input controls
 st.sidebar.header("👤 Profile Management")
 
+# Profile selection and management
 available_profiles = list_profiles()
+
 profile_action = st.sidebar.radio(
     "Profile Options:",
     ["Use Existing Profile", "Create New Profile", "No Profile (Guest)"],
@@ -216,14 +256,16 @@ elif profile_action == "No Profile (Guest)":
     st.session_state.profile_name = None
     st.sidebar.info("Using guest mode (no memory)")
 
-# Sidebar: Meal Preferences
 st.sidebar.markdown("---")
 st.sidebar.header("📋 Your Meal Preferences")
 
-restaurant_option = st.sidebar.radio(
+# Restaurant selection with two options: preset list or custom input
+restaurant_option: str = st.sidebar.radio(
     "Restaurant:", ["Select from list", "Enter custom restaurant"]
 )
 
+# Get restaurant name based on user's selection method
+restaurant: str
 default_restaurants = [
     "Chick-fil-A",
     "McDonald's",
@@ -235,10 +277,12 @@ default_restaurants = [
     "Domino's",
 ]
 
+# Add favorite restaurants to the list if profile exists
 if st.session_state.current_profile:
     fav_restaurants = st.session_state.current_profile["user_preferences"].get(
         "favorite_restaurants", []
     )
+    # Combine favorites with defaults (favorites first)
     all_restaurants = fav_restaurants + [
         r for r in default_restaurants if r not in fav_restaurants
     ]
@@ -246,29 +290,36 @@ else:
     all_restaurants = default_restaurants
 
 if restaurant_option == "Select from list":
+    # Use predefined list of popular fast food chains
     restaurant = st.sidebar.selectbox("Choose a restaurant:", all_restaurants)
 else:
+    # Allow user to enter any restaurant name
     restaurant = st.sidebar.text_input(
         "Enter restaurant name:",
         placeholder="e.g., Five Guys, Chipotle, Panera Bread...",
     )
 
-# Calorie target
+# Calorie target input with reasonable limits
+# Use profile default if available
 default_calories = 1200
 if st.session_state.current_profile:
     default_calories = st.session_state.current_profile["user_preferences"].get(
         "default_calorie_target", 1200
     )
 
-calories = st.sidebar.number_input(
+calories: int = st.sidebar.number_input(
     "Target calories:", min_value=300, max_value=2000, value=default_calories, step=50
 )
 
-# Dietary restrictions
-restrictions_option = st.sidebar.radio(
+# Dietary restrictions selection with two input methods
+restrictions_option: str = st.sidebar.radio(
     "Dietary restrictions:", ["Select from list", "Enter custom restrictions"]
 )
 
+# Get dietary restrictions based on user's selection method
+dietary_restrictions: List[str]
+
+# Get defaults from profile if available
 default_restrictions = []
 if st.session_state.current_profile:
     default_restrictions = st.session_state.current_profile["user_preferences"].get(
@@ -276,6 +327,7 @@ if st.session_state.current_profile:
     )
 
 if restrictions_option == "Select from list":
+    # Use predefined list of common dietary restrictions
     restriction_options = [
         "No restrictions",
         "Gluten-free",
@@ -288,24 +340,26 @@ if restrictions_option == "Select from list":
         "Low carb",
         "Keto",
     ]
-
+    
+    # Filter defaults to only include values that exist in options (case-sensitive match)
     valid_defaults = [r for r in default_restrictions if r in restriction_options]
-
+    
     dietary_restrictions = st.sidebar.multiselect(
         "Choose restrictions (if any):",
         restriction_options,
         default=valid_defaults,
     )
 else:
+    # Allow user to enter custom dietary restrictions
     default_custom = ", ".join(default_restrictions) if default_restrictions else ""
-    custom_restrictions = st.sidebar.text_input(
+    custom_restrictions: str = st.sidebar.text_input(
         "Enter your dietary restrictions:",
         value=default_custom,
-        placeholder="e.g., no nuts, halal, kosher...",
+        placeholder="e.g., no nuts, halal, kosher, diabetic-friendly...",
     )
     dietary_restrictions = [custom_restrictions] if custom_restrictions else []
 
-# Additional notes
+# Additional preferences and notes input
 default_notes = ""
 if st.session_state.current_profile:
     prefs = st.session_state.current_profile["user_preferences"]
@@ -319,16 +373,18 @@ if st.session_state.current_profile:
         notes_parts.append(f"Dislike {', '.join(dislikes)}")
     default_notes = "; ".join(notes_parts)
 
-additional_notes = st.sidebar.text_area(
+additional_notes: str = st.sidebar.text_area(
     "Additional preferences or notes:",
     value=default_notes,
-    placeholder="e.g., prefer grilled over fried, need extra protein...",
+    placeholder="e.g., prefer grilled over fried, need extra protein, avoid spicy foods, want to maximize fiber, etc.",
+    help="Be specific about your preferences. For example: 'I need extra protein for muscle building' or 'I prefer grilled options over fried'",
 )
 
 # Save preferences button
 if st.session_state.current_profile and st.sidebar.button(
     "💾 Save Current Preferences to Profile"
 ):
+    # Update profile with current preferences
     st.session_state.current_profile["user_preferences"][
         "default_calorie_target"
     ] = calories
@@ -336,6 +392,7 @@ if st.session_state.current_profile and st.sidebar.button(
         "dietary_restrictions"
     ] = dietary_restrictions
 
+    # Add restaurant to favorites if not already there
     if (
         restaurant
         and restaurant
@@ -347,33 +404,33 @@ if st.session_state.current_profile and st.sidebar.button(
             "favorite_restaurants"
         ].append(restaurant)
 
+    # Save to disk
     if save_profile(st.session_state.profile_name, st.session_state.current_profile):
         st.sidebar.success("✓ Preferences saved!")
     else:
         st.sidebar.error("Failed to save preferences")
 
-# Production Monitoring - Add health and cost dashboards to sidebar
-st.sidebar.markdown("---")
-render_health_dashboard()
-render_cost_dashboard()
-
-# Main content area
+# Create main content area with two columns
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.header("🎯 Your Meal Request")
 
     try:
-        user_goal = format_user_goal(
+        # Format user inputs into a natural language goal
+        user_goal: str = format_user_goal(
             restaurant, calories, dietary_restrictions, additional_notes
         )
+
+        # Display the formatted request to the user
         st.info(f"**Your request:** {user_goal}")
 
     except ValueError as e:
+        # Handle validation errors (e.g., empty restaurant name)
         st.warning(f"⚠️ {str(e)}")
         st.stop()
 
-    # Display meal history
+    # Display meal history if profile exists
     if st.session_state.current_profile:
         recent_meals = get_recent_meals(st.session_state.current_profile, count=10)
         if recent_meals:
@@ -381,31 +438,34 @@ with col1:
                 st.markdown("### Your Recent Orders")
                 for i, meal in enumerate(reversed(recent_meals), 1):
                     rating_display = (
-                        "⭐" * meal.get("rating", 0)
-                        if meal.get("rating")
-                        else "Not rated"
+                        "⭐" * meal.get("rating", 0) if meal.get("rating") else "Not rated"
                     )
                     st.markdown(
                         f"**{i}.** {meal.get('restaurant', 'Unknown')} - "
                         f"{meal.get('calories', 'N/A')} cal - {rating_display}"
                     )
+                    if meal.get("timestamp"):
+                        from datetime import datetime
+                        try:
+                            dt = datetime.fromisoformat(meal["timestamp"])
+                            st.caption(f"Date: {dt.strftime('%Y-%m-%d %H:%M')}")
+                        except ValueError:
+                            pass
 
-    # Main action button
+    # Main action button to generate meal recommendations
     if st.button(
-        "🤖 Get Multi-Agent Recommendations", type="primary", use_container_width=True
+        "🍽️ Get Meal Recommendations", type="primary", use_container_width=True
     ):
+        # Reset meal_logged flag when getting new recommendations
         st.session_state.meal_logged = False
-        generate_multi_agent_recommendations(
+        generate_meal_recommendations(
             user_goal, restaurant, calories, st.session_state.current_profile
         )
 
-    # Display previous recommendations
-    if st.session_state.get("show_recommendations"):
-        if st.button("🗑️ Clear Recommendations"):
-            st.session_state.show_recommendations = False
-            st.rerun()
+    # Display previous recommendations if they exist
+    display_previous_recommendations()
 
-    # Meal logging section
+    # Add meal logging section if recommendations exist and user has a profile
     if (
         st.session_state.get("show_recommendations")
         and st.session_state.current_profile
@@ -423,25 +483,27 @@ with col1:
                 options=[1, 2, 3, 4, 5],
                 value=3,
                 help="1 = Not satisfied, 5 = Very satisfied",
-                key="meal_rating_slider",
+                key="meal_rating_slider"
             )
 
         with col_rate2:
             if st.button("💾 Log Meal to History", use_container_width=True):
+                # Create meal entry
                 meal_entry = {
                     "restaurant": st.session_state.get("last_restaurant", restaurant),
                     "calories": st.session_state.get("last_calories", calories),
                     "rating": meal_rating,
                 }
 
+                # Add to profile and update statistics
                 updated_profile = add_meal_to_history(
                     st.session_state.current_profile, meal_entry
                 )
-
+                
+                # Save to disk
                 if save_profile(st.session_state.profile_name, updated_profile):
-                    st.session_state.current_profile = load_profile(
-                        st.session_state.profile_name
-                    )
+                    # Reload from disk to ensure sync
+                    st.session_state.current_profile = load_profile(st.session_state.profile_name)
                     st.session_state.meal_logged = True
                     st.success("✓ Meal logged successfully!")
                     st.rerun()
@@ -449,37 +511,29 @@ with col1:
                     st.error("Failed to log meal")
 
 with col2:
-    st.header("🤖 Multi-Agent System")
+    # Information section explaining how the app works
+    st.header("ℹ️ How it works")
     st.markdown("""
-    **How it works:**
+    1. **Create or load a profile** in the sidebar
+    2. **Select your preferences** (auto-filled from profile)
+    3. **Click the button** to get recommendations
+    4. **Rate your meal** to improve future suggestions
     
-    1. **Nutritionist Agent** 🧬
-       - Analyzes your dietary needs
-       - Calculates macro targets
-       - Reviews your meal history
-    
-    2. **Restaurant Expert** 🍔
-       - Recommends specific items
-       - Suggests customizations
-       - Optimizes for your goals
-    
-    3. **Profile Manager** 📊
-       - Learns your preferences
-       - Detects rating patterns
-       - Provides personalized insights
-    
-    4. **Coordinator** 🎯
-       - Combines all insights
-       - Ensures consistency
-       - Handles errors gracefully
+    The AI nutritionist will analyze your request and provide:
+    - Specific menu items
+    - Nutritional breakdown
+    - Customization suggestions
+    - Context-aware recommendations
     """)
 
-    st.header("✨ Benefits")
+    # Tips section for better user experience
+    st.header("💡 New Features")
     st.markdown("""
-    - **More Accurate**: Specialized expertise
-    - **Context-Aware**: Learns from history
-    - **Reliable**: Automatic fallbacks
-    - **Transparent**: See agent collaboration
+    - **📊 User Profiles**: Save preferences & track history
+    - **🧠 Context-Aware**: Agent learns your preferences
+    - **📈 Meal History**: View past orders & ratings
+    - **⭐ Rating System**: Improve recommendations over time
+    - **💾 Auto-Fill**: Preferences load automatically
     """)
 
     if st.session_state.current_profile:
@@ -490,37 +544,7 @@ with col2:
             st.metric("Avg Calories/Meal", f"{stats['avg_daily_calories']:.0f}")
         if stats.get("avg_meal_rating"):
             st.metric("Avg Rating", f"{stats['avg_meal_rating']:.1f}/5 ⭐")
-        
-        # Profile insights button
-        if stats.get("total_meals_tracked", 0) >= 3:
-            if st.button("🔍 Get Profile Insights", use_container_width=True):
-                with st.spinner("Analyzing your preferences..."):
-                    from multi_agents.profile_manager_agent import ProfileManagerAgent
-                    import asyncio
-                    
-                    with open("prompts/profile_manager_prompt.txt", "r") as f:
-                        pm_prompt = f.read()
-                    
-                    pm_agent = ProfileManagerAgent(pm_prompt)
-                    insights = asyncio.run(pm_agent.analyze_profile(st.session_state.current_profile))
-                    
-                    st.session_state.profile_insights = insights
-                    st.rerun()
-        
-        # Display insights if available
-        if st.session_state.get("profile_insights"):
-            with st.expander("💡 Your Profile Insights", expanded=True):
-                # Display in a scrollable text area for better formatting
-                st.text_area(
-                    "Analysis Results",
-                    value=st.session_state.profile_insights,
-                    height=400,
-                    label_visibility="collapsed"
-                )
-                if st.button("Clear Insights"):
-                    st.session_state.profile_insights = None
-                    st.rerun()
 
+# Application footer
 st.markdown("---")
-st.markdown("🤖 Powered by 4-Agent AI System (Nutritionist + Restaurant + Profile Manager + Coordinator) | Built with Streamlit and OpenAI")
-
+st.markdown("Built with ❤️ using Streamlit and OpenAI")

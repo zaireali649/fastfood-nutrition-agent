@@ -1,0 +1,360 @@
+# Fast Food Nutrition Agent
+
+> Multi-agent AI system providing personalized fast food meal recommendations using OpenAI Agents SDK, Streamlit, and Supabase.
+
+## Project Overview
+
+**Tech Stack**: Python 3.13, Streamlit, OpenAI Agents SDK (GPT-4), Supabase PostgreSQL, JSON fallback storage  
+**Status**: Production-ready v3 (deployed on Streamlit Share)  
+**Purpose**: Provides personalized fast food recommendations through 4 specialized AI agents (Coordinator, Nutritionist, Restaurant Expert, Profile Manager) that analyze dietary needs, learn preferences, and generate context-aware meal suggestions with comprehensive security, monitoring, and cost controls.
+
+**Last Updated**: 2025-01-24  
+**Project Version**: 3.0 (Multi-Agent Production System)
+
+---
+
+## Core Documentation
+
+### README.md
+Main project documentation with complete feature overview, installation instructions, and usage guide. Read this file to understand the application's purpose, key features (personalized recommendations, multi-agent system, profile management), setup process for local and production deployment, and technical architecture overview. Start here for project onboarding. Essential for new developers or contributors understanding the full system scope.
+
+### QUICK_START.md
+5-minute deployment guide with streamlined setup instructions. Read this file to understand rapid deployment to Streamlit Share with Supabase backend, local development setup using setup.sh script, environment configuration, troubleshooting common issues, and cost breakdown ($5/month budget). Use this file when quickly deploying or setting up local development environment without detailed explanations.
+
+### PROJECT_STRUCTURE.md
+Comprehensive codebase organization guide with directory explanations and architectural patterns. Read this file to understand the project's directory structure, file organization by functional area (core/, config/, middleware/, multi_agents/, etc.), design patterns implemented (circuit breaker, retry with backoff, dual storage, multi-agent coordination), request flow through the system, security layer architecture, and scaling path from free tier to enterprise. Essential when navigating the codebase or understanding architectural decisions.
+
+### DEPLOYMENT.md
+Complete production deployment guide with step-by-step instructions. Read this file to understand Supabase project setup and schema deployment, Streamlit Share configuration, environment variable management, secrets configuration (OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY), post-deployment validation steps, and production monitoring setup. Use this file when deploying to production for the first time or troubleshooting deployment issues.
+
+### PRODUCTION_CHECKLIST.md
+Pre-launch validation checklist with security, performance, and readiness verification. Read this file to understand required pre-deployment checks including security validation (input sanitization, SQL injection prevention, XSS protection), performance benchmarks, monitoring setup verification, error handling validation, cost control configuration, and documentation completeness. Use this file before any production release to ensure system readiness.
+
+### SUPABASE_SETUP.md
+Database configuration guide with Supabase-specific instructions. Read this file to understand Supabase project creation, PostgreSQL schema deployment from schema.sql, API key retrieval and management, connection testing procedures, Row Level Security configuration, and troubleshooting database connectivity issues. Use this file when setting up or migrating the database backend.
+
+---
+
+## Main Application
+
+### multi_agent_app.py
+Primary Streamlit application entry point with complete UI and agent orchestration. Read this file to understand the main user interface implementation, profile management workflow (`list_profiles()`, `load_profile()`, `save_profile()`), user input handling and validation, multi-agent workflow invocation through `run_multi_agent_workflow()`, recommendation display and formatting, meal logging with ratings (1-5 stars), health dashboard rendering, cost tracking display, and session state management. Use this file when modifying UI components, adding new features to the web interface, understanding the user flow from input to recommendation, or debugging Streamlit-specific issues. Integrates with `multi_agents.coordinator`, `memory.user_profile`, `middleware.security`, `middleware.error_handler`, `config.cost_control`, and `core.health_endpoint`. Main production file used by Streamlit Share deployment.
+
+### app.py
+CLI utility and startup validation script with system health checks. Read this file to understand command-line interface for system diagnostics, environment variable validation, database connectivity testing, OpenAI API key verification, and local development startup procedures. Use this file when creating CLI tools, implementing health check scripts, or understanding local development setup requirements. Simpler than multi_agent_app.py and used for development/testing purposes.
+
+### profile_insights.py
+Standalone profile analysis utility using Profile Manager Agent. Read this file to understand how to invoke the Profile Manager Agent outside the web interface, generate preference insights from meal history, detect rating patterns, and output analysis to console. Use this file when testing profile analysis features, batch processing user insights, or debugging the Profile Manager Agent in isolation. Includes example usage of `ProfileManagerAgent.analyze_profile()` method.
+
+---
+
+## Multi-Agent System
+
+### multi_agents/coordinator.py
+Central agent orchestrator implementing sequential pipeline with error handling and fallbacks. Read this file to understand the `CoordinatorAgent` class that orchestrates workflow between all agents, the `process_request()` method that implements the 4-step sequential pipeline (profile insights → nutritional analysis → restaurant recommendations → response coordination), timeout handling (45 seconds per agent using `asyncio.wait_for()`), error recovery strategies and fallback modes, session context tracking (`agents_used`, `errors`, `fallback_triggered`), and the `_fallback_single_agent()` method for graceful degradation. Essential when understanding agent orchestration, implementing new agents, debugging agent failures, or modifying the workflow sequence. Works with `NutritionistAgent`, `RestaurantAgent`, and `ProfileManagerAgent`. Entry point function is `run_multi_agent_workflow(user_goal, user_profile)`.
+
+### multi_agents/nutritionist_agent.py
+Dietary analysis agent calculating macro targets and nutritional guidance. Read this file to understand the `NutritionistAgent` class that analyzes dietary requirements, the `analyze_request()` method that processes user goals and profile data, macro target calculation logic (protein, carbs, fats, sodium recommendations), dietary restriction handling (gluten-free, vegan, low-sodium, etc.), meal history review for daily intake tracking, and calorie budget distribution. Use this file when modifying nutritional analysis logic, adjusting macro calculation algorithms, adding new dietary restrictions support, or debugging nutrition-related recommendations. Takes user goal string, optional user profile dict, and optional profile insights. Returns formatted nutritional analysis string. Works with system prompt from `prompts/nutritionist_agent_prompt.txt`.
+
+### multi_agents/restaurant_agent.py
+Menu expert agent providing restaurant-specific recommendations with customizations. Read this file to understand the `RestaurantAgent` class that recommends specific menu items, the `get_recommendations()` method that processes user goals with nutritional analysis, menu item selection logic matching calorie targets, customization strategies (remove bun, extra protein, grilled vs fried), preference consideration (favorite restaurants, disliked items, cooking methods), and optimization for nutritional targets. Use this file when adding restaurant knowledge, modifying recommendation logic, implementing new customization patterns, or debugging menu suggestions. Takes user goal, nutritional analysis, optional user profile, and profile insights. Returns formatted restaurant recommendations with 2-3 specific menu options. Works with system prompt from `prompts/restaurant_agent_prompt.txt`.
+
+### multi_agents/profile_manager_agent.py
+Preference learning agent analyzing meal history and generating insights. Read this file to understand the `ProfileManagerAgent` class that learns user preferences over time, the `analyze_profile()` method that processes meal history data (requires 3+ tracked meals), rating pattern detection logic (average ratings by restaurant/item), preference identification (favorite restaurants, disliked items, cooking method preferences), recommendation accuracy calculation, and suggested profile updates. Use this file when implementing preference learning features, modifying pattern detection algorithms, adding new insight types, or debugging profile analysis. Takes user profile dict with meal_history array. Returns formatted insights string with detected patterns and recommendations. Only invoked if user has 3+ meals tracked. Works with system prompt from `prompts/profile_manager_prompt.txt`.
+
+---
+
+## User Memory & Profiles
+
+### memory/user_profile.py
+Dual-storage profile management system with PostgreSQL primary and JSON fallback. Read this file to understand profile CRUD operations (`create_default_profile()`, `load_profile()`, `save_profile()`, `list_profiles()`), the dual storage pattern with automatic fallback when database unavailable, profile data structure (user_preferences, dietary_restrictions, meal_history, stats), meal history tracking with `add_meal_to_history()`, statistics calculation (`_calculate_stats()` for avg_daily_calories, avg_meal_rating, total_meals_tracked), recent meals retrieval with `get_recent_meals()`, and profile summary generation with `get_profile_summary()`. Essential when implementing profile features, understanding data persistence, modifying profile schema, or debugging storage issues. Automatically detects database availability using `is_database_available()` and falls back to JSON files in `data/profiles/`. All functions handle both storage mechanisms transparently.
+
+### data/profiles/*.json
+User profile JSON files for fallback storage. Read these files to understand the profile data structure with examples including user_preferences (dietary_restrictions, favorite_restaurants, disliked_items, preferred_cooking_methods, default_calorie_target), meal_history array (restaurant, calories, rating, timestamp), and computed stats (total_meals_tracked, avg_meal_rating, avg_daily_calories). Use these files as examples when implementing profile features or understanding data format. Files are created automatically by `memory.user_profile.save_profile()` when database unavailable.
+
+---
+
+## Configuration & Environment
+
+### config/environments.py
+Environment-aware configuration with dev/staging/production settings. Read this file to understand environment detection from ENVIRONMENT env var, the `get_config()` function for retrieving environment-specific settings, default configuration values per environment (cost limits, rate limits, feature flags), and environment-specific behavior (development has relaxed limits, production has strict controls). Use this file when adding new configuration options, implementing environment-specific features, or understanding how settings differ between dev and production. Provides centralized configuration management accessed throughout the application.
+
+### config/cost_control.py
+OpenAI API budget protection with real-time cost tracking and spending limits. Read this file to understand the `CostController` class managing API costs, the `can_make_request()` method checking budget before API calls (returns boolean and reason string), cost estimation with `estimate_cost()` based on model and token counts, usage logging to database/memory with `log_usage()`, spending limit enforcement (daily $0.17, monthly $5 by default), hourly rate limiting (20 requests/hour), usage statistics with `get_usage_summary()` showing daily/monthly spending and percentages, and dual tracking using database or in-memory fallback. Essential when understanding cost controls, adjusting budget limits, implementing new API features, or debugging budget issues. All API calls should check `can_make_api_request()` before execution. Model costs defined in MODEL_COSTS dict for gpt-4, gpt-4-turbo, gpt-3.5-turbo.
+
+### config/database.py
+Supabase connection management with automatic fallback and health checks. Read this file to understand Supabase client initialization with `get_supabase_client()`, connection pooling and error handling, database availability checking with `is_database_available()`, connection health verification, graceful fallback to JSON storage when database unreachable, and environment-based configuration (SUPABASE_URL, SUPABASE_KEY). Use this file when implementing database features, troubleshooting connection issues, modifying fallback behavior, or adding new database operations. Used by all modules requiring database access including `memory.user_profile` and `config.cost_control`.
+
+---
+
+## Security & Middleware
+
+### middleware/security.py
+Comprehensive input validation and sanitization preventing SQL injection and XSS attacks. Read this file to understand the `SecurityValidator` class with validation methods, SQL injection pattern detection (SQL_INJECTION_PATTERNS regex list), XSS attack prevention (XSS_PATTERNS regex list), input length validation (MAX_TEXT_LENGTH, MAX_RESTAURANT_LENGTH, MAX_PROFILE_NAME_LENGTH), text sanitization with `validate_text_input()` removing control characters, restaurant name validation with `validate_restaurant_name()` allowing only safe characters, profile name validation with `validate_profile_name()`, calorie validation with `validate_calorie_target()` (300-5000 range), dietary restrictions validation with `validate_dietary_restrictions()` (max 10 items), and rating validation with `validate_rating()` (1-5 range). Essential when adding new user inputs, understanding security measures, or debugging validation issues. Main entry point is `sanitize_user_inputs()` returning dict with valid boolean, sanitized values, and error messages. All user inputs must pass through validation before processing.
+
+### middleware/content_filter.py
+OpenAI Moderation API integration filtering inappropriate content before request processing. Read this file to understand content moderation workflow using OpenAI Moderation API, inappropriate content detection (hate, harassment, self-harm, sexual, violence), moderation result parsing and categorization, request blocking when policy violations detected, and error handling for moderation API failures. Use this file when implementing content filtering for new inputs, adjusting moderation strictness, or understanding content policy enforcement. Integrates with OpenAI API separate from main agent calls.
+
+### middleware/error_handler.py
+Global error handling with SafetyWrapper context manager providing graceful degradation. Read this file to understand the `SafetyWrapper` context manager for try-catch error handling, error categorization by type (api_error, database_error, validation_error), user-friendly error message generation, technical error logging for debugging, error state tracking (error_occurred, error_message attributes), and graceful degradation patterns. Use this file when implementing error handling for new features, customizing error messages, or understanding how errors are communicated to users. Wrap risky operations with `with SafetyWrapper(error_type="...") as safety:` then check `safety.error_occurred` after the block.
+
+---
+
+## Core Production Features
+
+### core/circuit_breaker.py
+Circuit breaker pattern preventing cascading failures in external API calls. Read this file to understand the `CircuitBreaker` class implementing the pattern, three states (CLOSED, OPEN, HALF_OPEN) with state transition logic, failure threshold detection triggering breaker opening, automatic recovery testing in half-open state, timeout configuration per breaker instance, fast-fail behavior when circuit open preventing unnecessary API calls, and success/failure tracking. Use this file when protecting API calls, implementing fault tolerance, understanding failure recovery, or debugging cascading failure prevention. Wrap API calls with circuit breaker to automatically fail fast during outages and recover when service restored. Essential for production resilience.
+
+### core/retry_handler.py
+Intelligent retry logic with exponential backoff and jitter for transient failures. Read this file to understand the `RetryHandler` class managing retry attempts, exponential backoff calculation (delay doubles each retry), random jitter addition preventing thundering herd, configurable retry attempts (default 3), maximum delay limits, retry condition evaluation (which errors trigger retries), and success/failure logging. Use this file when implementing retry logic for API calls, database operations, or external service calls. Decorator pattern available for easy integration. Works with circuit breaker for comprehensive fault tolerance.
+
+### core/health_endpoint.py
+Health monitoring dashboard components for Streamlit sidebar. Read this file to understand `render_health_dashboard()` displaying system health metrics, database connectivity indicators (green/red status), API availability checks, agent status display, `render_cost_dashboard()` showing budget usage with progress bars, daily/monthly spending display, cost alerts when approaching limits, and real-time metric updates. Use this file when adding new health metrics, customizing dashboard display, or understanding monitoring visualization. Integrates with `monitoring.health` for health checks and `config.cost_control` for budget data. Rendered in sidebar of multi_agent_app.py.
+
+---
+
+## Monitoring & Observability
+
+### monitoring/logger.py
+Structured JSON logging system with environment-aware log levels and context propagation. Read this file to understand structured logging setup, log level configuration per environment (DEBUG in dev, INFO in production), JSON formatting for production logs, context addition to log entries (request_id, user_id, environment), performance metrics logging, error stack trace capture, and console vs file output configuration. Use this file when adding logging to new features, debugging issues with log analysis, or implementing new log types. Import logger with `from monitoring.logger import logger` then use `logger.info()`, `logger.error()`, etc.
+
+### monitoring/metrics.py
+Performance tracking system recording request latency, agent execution times, and system metrics. Read this file to understand metric collection points throughout request lifecycle, request duration tracking, agent-specific performance measurement, database query time recording, API call latency capture, metrics storage in database or in-memory, and metric aggregation for reporting. Use this file when adding performance tracking to new features, analyzing system performance, or debugging slow operations. Metrics used by health dashboard and cost reporting.
+
+### monitoring/health.py
+System health check utilities verifying service availability and system status. Read this file to understand database connectivity checks, API key validation, agent availability verification, budget status checking, service dependency monitoring, health status aggregation (overall system health), and alerting thresholds. Use this file when implementing new health checks, troubleshooting service availability, or customizing health monitoring. Provides functions like `check_database_health()`, `check_api_health()` used by health dashboard.
+
+---
+
+## Database Schema
+
+### supabase/schema.sql
+Complete PostgreSQL database schema with 5 tables, indexes, and triggers. Read this file to understand the user_profiles table structure (id, profile_name, preferences JSONB, dietary_restrictions array, created_at, updated_at), meal_history table (id, profile_id FK, restaurant, calories, rating, timestamp), api_usage table (id, model, tokens_used, estimated_cost, request_type, profile_id, success, error_message, timestamp) for cost tracking, error_logs table (id, error_type, error_message, stack_trace, context JSONB, timestamp), system_metrics table (id, metric_name, metric_value, tags JSONB, timestamp), primary and foreign key constraints, indexes for performance (profile_name, timestamp queries), and automatic updated_at triggers. Essential when modifying database schema, understanding data relationships, adding new tables, or optimizing queries. Deploy by running this SQL in Supabase SQL editor.
+
+---
+
+## Agent System Prompts
+
+### prompts/coordinator_prompt.txt
+System prompt defining Coordinator Agent's orchestration role and response formatting. Read this file to understand instructions for combining multi-agent outputs, maintaining response consistency and tone, handling partial results when agents timeout, formatting final recommendations, acknowledging user context and preferences, and error communication patterns. Modify this file when adjusting coordinator behavior, changing response format, or improving output quality. Loaded by `multi_agents.coordinator.CoordinatorAgent.__init__()`.
+
+### prompts/nutritionist_agent_prompt.txt
+System prompt defining Nutritionist Agent's dietary analysis approach and nutritional principles. Read this file to understand instructions for macro target calculation (protein 25-30%, carbs 40-50%, fats 20-30%), calorie distribution strategies, dietary restriction handling (gluten-free, vegan, diabetic-friendly, etc.), meal history review for daily intake, sodium recommendations (<2300mg/day), and nutritional guidance tone. Modify this file when adjusting nutritional recommendations, adding new dietary considerations, or changing analysis approach. Loaded by `multi_agents.nutritionist_agent.NutritionistAgent.__init__()`.
+
+### prompts/restaurant_agent_prompt.txt
+System prompt defining Restaurant Agent's menu expertise and recommendation strategies. Read this file to understand instructions for menu item selection matching nutritional targets, customization suggestions (no bun, extra protein, sauce on side), cooking method preferences (grilled vs fried), restaurant-specific knowledge application, providing 2-3 concrete options, portion size considerations, and preference incorporation. Modify this file when adding restaurant knowledge, adjusting recommendation logic, or improving menu suggestions. Loaded by `multi_agents.restaurant_agent.RestaurantAgent.__init__()`.
+
+### prompts/profile_manager_prompt.txt
+System prompt defining Profile Manager Agent's preference learning and pattern detection approach. Read this file to understand instructions for analyzing meal history patterns, detecting favorite/disliked items, calculating recommendation accuracy, identifying cooking method preferences, suggesting profile updates, providing actionable insights, and requiring minimum 3 meals for analysis. Modify this file when adjusting preference learning logic, adding new pattern types, or changing insight generation. Loaded by `multi_agents.profile_manager_agent.ProfileManagerAgent.__init__()`.
+
+---
+
+## Testing Infrastructure
+
+### tests/conftest.py
+Pytest fixtures and test configuration providing reusable test components. Read this file to understand available fixtures (sample user profiles, mock agents, database connections, API mocks), test environment setup, fixture scope configuration, test data factories, and shared test utilities. Use this file when writing new tests, understanding test dependencies, or adding new fixtures. All test files import fixtures from here automatically.
+
+### tests/test_security.py
+Security validation tests covering 15+ attack scenarios and input validation. Read this file to understand SQL injection prevention testing, XSS attack detection testing, input length validation tests, restaurant name validation tests, profile name validation tests, dietary restriction validation tests, calorie range validation tests, rating validation tests, and sanitization verification. Use this file when adding new security features, understanding security test coverage, or verifying security fixes. Tests the `middleware.security` module.
+
+### tests/test_cost_control.py
+Budget protection tests validating spending limits and rate limiting. Read this file to understand daily/monthly budget limit enforcement tests, hourly rate limiting tests, cost estimation accuracy tests, usage tracking tests, budget alert threshold tests, and fallback to in-memory tracking tests. Use this file when modifying cost control logic, understanding budget test coverage, or verifying cost tracking accuracy. Tests the `config.cost_control` module.
+
+### tests/test_database.py
+Database operation tests covering connection management and CRUD operations. Read this file to understand database connection tests, profile CRUD operation tests, meal history tracking tests, fallback to JSON storage tests, error handling tests, transaction tests, and data integrity validation. Use this file when implementing new database features, understanding database test patterns, or debugging database issues. Tests `config.database` and `memory.user_profile` modules.
+
+### tests/test_content_filter.py
+Content moderation tests validating OpenAI Moderation API integration. Read this file to understand content filtering tests for various content types (hate speech, violence, sexual content), moderation API integration tests, content blocking logic tests, and error handling when moderation API fails. Use this file when modifying content filtering, understanding moderation test coverage, or debugging filtering issues. Tests the `middleware.content_filter` module.
+
+### tests/test_profile_management.py
+Profile management tests covering profile lifecycle and statistics calculation. Read this file to understand profile creation tests, profile loading/saving tests, meal history tracking tests, statistics calculation tests (avg_meal_rating, avg_daily_calories, total_meals_tracked), preference management tests, and profile update tests. Use this file when implementing profile features, understanding profile test patterns, or debugging profile operations. Tests `memory.user_profile` module.
+
+### tests/test_environments.py
+Configuration and environment detection tests validating environment-specific settings. Read this file to understand environment variable parsing tests, config value retrieval tests, environment detection tests (dev/staging/production), default value tests, and environment-specific setting validation. Use this file when adding new configuration options, understanding config test patterns, or debugging environment issues. Tests `config.environments` module.
+
+---
+
+## Automation Scripts
+
+### scripts/setup.sh
+One-command local development setup automating environment preparation. Read this file to understand virtual environment creation with venv, dependency installation from requirements.txt and requirements-dev.txt, .env file generation from template, directory structure creation (data/profiles/), and installation validation. Use this file when setting up new development environments or understanding setup requirements. Run with `./scripts/setup.sh` on Unix or manually execute commands on Windows.
+
+### scripts/test.sh
+Test execution script running pytest with coverage reporting and result formatting. Read this file to understand pytest invocation with coverage, HTML coverage report generation in htmlcov/, coverage threshold enforcement (70%+), test result formatting, and exit code handling. Use this file when running test suite or understanding test configuration. Run with `./scripts/test.sh` or manually run `pytest tests/ --cov=. --cov-report=html`.
+
+### scripts/deploy_check.sh
+Pre-deployment validation script checking configuration and system readiness. Read this file to understand environment variable validation (OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY), required file verification, database connectivity testing, API key verification, configuration validation, and deployment readiness reporting. Use this file before production deployments to catch configuration issues early. Run with `./scripts/deploy_check.sh` before deploying.
+
+### scripts/health_check.py
+Command-line health monitoring utility generating system health reports. Read this file to understand CLI-based health checking, database health verification, API availability testing, budget status checking, agent health verification, and structured health report output. Use this file for system diagnostics, automated monitoring, or debugging production issues. Run with `python scripts/health_check.py` for current system status.
+
+### scripts/cost_report.py
+Budget usage reporting utility generating detailed cost analysis and forecasts. Read this file to understand daily/monthly spending calculation, cost breakdown by request type, budget usage percentage calculation, spending forecast generation, alert generation when approaching limits, and formatted cost report output. Use this file for cost monitoring, budget analysis, or understanding spending patterns. Run with `python scripts/cost_report.py` for current budget status.
+
+---
+
+## Tools & Integrations
+
+### tools/usda_api.py
+USDA FoodData Central API integration for accurate nutritional data retrieval. Read this file to understand USDA API authentication and request formatting, food search by name or keyword, nutritional data parsing (calories, protein, carbs, fats, sodium, etc.), response caching for performance, error handling and retries, and data normalization. Use this file when implementing enhanced nutritional analysis, adding food database features, or understanding nutritional data sources. Could be integrated with agents for more accurate nutritional information.
+
+---
+
+## Key Concepts
+
+**Multi-Agent Sequential Pipeline**:
+1. User submits meal request with restaurant, calories, dietary restrictions
+2. Coordinator loads user profile (if exists)
+3. Profile Manager analyzes history (if 3+ meals tracked) and generates preference insights
+4. Nutritionist receives request + profile + insights, analyzes dietary needs, calculates macros
+5. Restaurant Expert receives request + nutritional analysis + profile + insights, recommends specific menu items
+6. Coordinator combines all outputs into cohesive response
+7. User rates recommendation (1-5 stars), stored in meal history for future learning
+
+**Error Handling & Fallback Hierarchy**:
+- Level 1: Full multi-agent mode with all 4 agents collaborating (optimal)
+- Level 2: Partial mode if one agent times out (45s timeout), continue with available outputs
+- Level 3: Single-agent fallback if multi-agent workflow fails entirely
+- Level 4: Error message with clear explanation if all systems fail
+
+**Dual Storage Pattern**:
+- Primary: PostgreSQL via Supabase for production durability and querying
+- Fallback: JSON files in data/profiles/ when database unavailable
+- Automatic detection with `is_database_available()` at runtime
+- All profile operations transparent to callers (save/load work identically)
+
+**Cost Control Flow**:
+1. Before API request: Call `can_make_api_request(estimated_cost)`
+2. If within budget: Proceed with API call
+3. After API call: Call `log_api_usage(model, input_tokens, output_tokens)`
+4. System tracks spending in database + in-memory
+5. Dashboard displays real-time budget usage
+
+**Security Layers**:
+- Layer 1: Input validation via `middleware.security` (SQL injection, XSS, length limits)
+- Layer 2: Content filtering via `middleware.content_filter` (OpenAI Moderation API)
+- Layer 3: Budget protection via `config.cost_control` (spending limits, rate limiting)
+- Layer 4: Circuit breaker via `core.circuit_breaker` (cascading failure prevention)
+- Layer 5: Error handling via `middleware.error_handler` (graceful degradation)
+
+---
+
+## Common Tasks
+
+**To add a new agent**: 
+1. Create agent class in `multi_agents/new_agent.py` with `Agent` initialization and processing method
+2. Create system prompt in `prompts/new_agent_prompt.txt` defining role and behavior
+3. Modify `multi_agents/coordinator.py` to import and integrate new agent in workflow
+4. Update `multi_agent_app.py` UI if agent needs user input or displays specific output
+5. Add tests in `tests/test_new_agent.py` covering agent functionality
+
+**To modify agent behavior**: 
+Edit the corresponding prompt file in `prompts/` directory, test with `multi_agent_app.py`, validate changes don't break existing functionality, update documentation if behavior changes significantly.
+
+**To add a new profile field**: 
+1. Update profile structure in `memory/user_profile.py` in `create_default_profile()`
+2. Modify database schema in `supabase/schema.sql` adding new column/field
+3. Deploy schema changes to Supabase via SQL editor
+4. Update UI in `multi_agent_app.py` to collect/display new field
+5. Update tests in `tests/test_profile_management.py` to cover new field
+
+**To adjust budget limits**: 
+Modify `daily_cost_limit` in `config/environments.py` for the target environment, update `hourly_request_limit` if needed, redeploy application, verify new limits in health dashboard.
+
+**To add new security validation**: 
+Add validation method to `SecurityValidator` class in `middleware/security.py`, add regex patterns to detection lists if needed, call validation in `sanitize_user_inputs()`, add tests in `tests/test_security.py`, document new validation rule.
+
+**To troubleshoot agent failures**: 
+1. Check session context in UI expandable section for error details
+2. Review logs in Streamlit output for stack traces
+3. Check health dashboard for system status (database, API, budget)
+4. Verify environment variables are set correctly
+5. Test individual agents with `profile_insights.py` or isolated runs
+6. Check timeout settings (45s default per agent in coordinator.py)
+
+**To deploy to production**: 
+1. Run `./scripts/deploy_check.sh` to validate configuration
+2. Run `./scripts/test.sh` to ensure all tests pass
+3. Review `PRODUCTION_CHECKLIST.md` and complete all items
+4. Push code to GitHub
+5. Configure Streamlit Share app pointing to repo and `multi_agent_app.py`
+6. Add secrets in Streamlit Share UI (OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY, ENVIRONMENT=production)
+7. Deploy and monitor health dashboard for issues
+8. Run `python scripts/health_check.py` post-deployment for validation
+
+---
+
+## Architecture Reference
+
+**Request Flow**:
+```
+User Input (Streamlit UI)
+  → Input Validation (middleware/security.py)
+  → Content Filtering (middleware/content_filter.py)
+  → Budget Check (config/cost_control.py)
+  → Multi-Agent Workflow (multi_agents/coordinator.py)
+    ├→ Profile Manager Agent (if 3+ meals)
+    ├→ Nutritionist Agent
+    ├→ Restaurant Agent
+    └→ Coordinator combines outputs
+  → Response Display (Streamlit UI)
+  → Meal Rating & Storage (memory/user_profile.py)
+  → Metrics Logging (monitoring/metrics.py)
+```
+
+**File Dependencies**:
+- `multi_agent_app.py` imports: coordinator, user_profile, security, error_handler, cost_control, health_endpoint
+- `coordinator.py` imports: nutritionist_agent, restaurant_agent, profile_manager_agent
+- All agents import: OpenAI Agents SDK (agents.Agent, agents.Runner)
+- `user_profile.py` imports: database, environments
+- `cost_control.py` imports: database, environments
+- All middleware imports: logger from monitoring
+- All modules can import: environments for config, logger for logging
+
+**Data Flow**:
+```
+User Profile (database or JSON)
+  → Loaded by user_profile.py
+  → Passed to coordinator.py
+  → Distributed to agents (nutritionist, restaurant, profile_manager)
+  → Agents analyze and generate outputs
+  → Outputs combined by coordinator
+  → Recommendation returned to UI
+  → User rates recommendation
+  → Rating added to meal_history
+  → Profile statistics recalculated
+  → Updated profile saved
+```
+
+---
+
+## Development Status
+
+**Completed Features**:
+- ✅ Multi-agent system (4 specialized agents)
+- ✅ Profile management with meal history
+- ✅ Preference learning (3+ meal requirement)
+- ✅ Dual storage (PostgreSQL + JSON fallback)
+- ✅ Security middleware (SQL injection, XSS prevention)
+- ✅ Content filtering (OpenAI Moderation API)
+- ✅ Cost control ($5/month budget)
+- ✅ Circuit breaker pattern
+- ✅ Retry with exponential backoff
+- ✅ Health monitoring dashboard
+- ✅ Comprehensive test suite (70%+ coverage)
+- ✅ Production deployment on Streamlit Share
+
+**Known Limitations**:
+- Agents use general menu knowledge, not real-time restaurant APIs
+- USDA API integration exists but not yet connected to agents
+- No meal planning or calendar features
+- Profile insights require minimum 3 tracked meals
+- Single user session (no multi-user auth)
+
+**Future Enhancements**:
+- Real restaurant API integrations
+- Meal planning and weekly calendars
+- Nutritional trend analysis and charts
+- Social features (share meals, compare with friends)
+- Mobile-responsive UI improvements
+- Multi-language support
